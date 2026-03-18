@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import Icon from "@/components/ui/icon";
 
 const BEAR_LOGO = "https://cdn.poehali.dev/projects/cbbdfdb6-95d2-4661-a47f-6dc876d18b71/files/3399efb5-ecb7-4404-84d4-d93a2f8ae9cb.jpg";
@@ -13,41 +13,48 @@ const contacts = [
   { id: 6, name: "Катя Лисова", avatar: "КЛ", status: "offline", lastSeen: "2 дня назад", color: "#FF6B35" },
 ];
 
-const chatsData = [
+type MsgType = "text" | "image" | "video" | "voice" | "circle";
+type Reaction = { emoji: string; count: number; mine: boolean };
+type Message = { id: number; own: boolean; text: string; time: string; type?: MsgType; mediaUrl?: string; duration?: number; reactions?: Reaction[] };
+type Chat = { id: number; contactId: number; unread: number; messages: Message[] };
+
+const chatsData: Chat[] = [
   {
     id: 1, contactId: 1, unread: 3,
     messages: [
-      { id: 1, own: false, text: "Привет! Как дела?", time: "10:00" },
-      { id: 2, own: true, text: "Всё отлично, спасибо! Как ты?", time: "10:02" },
-      { id: 3, own: false, text: "Тоже хорошо! Планируешь на выходные что-то?", time: "10:03" },
-      { id: 4, own: true, text: "Да, думаем с друзьями собраться", time: "10:05" },
-      { id: 5, own: false, text: "Круто! Возьмёте меня? 😄", time: "10:06" },
-      { id: 6, own: false, text: "И кстати, ты уже пробовал новый MishkaChat?", time: "10:07" },
+      { id: 1, own: false, text: "Привет! Как дела?", time: "10:00", type: "text" },
+      { id: 2, own: true, text: "Всё отлично! Смотри что нашёл", time: "10:02", type: "text" },
+      { id: 3, own: true, text: "", time: "10:03", type: "image", mediaUrl: "https://images.unsplash.com/photo-1608848461950-0fe51dfc41cb?w=300&q=80" },
+      { id: 4, own: false, text: "Круто! Возьмёте меня? 😄", time: "10:06", type: "text", reactions: [{ emoji: "😄", count: 2, mine: true }, { emoji: "❤️", count: 1, mine: false }] },
+      { id: 5, own: false, text: "", time: "10:07", type: "voice", duration: 12 },
+      { id: 6, own: true, text: "", time: "10:08", type: "circle", mediaUrl: "" },
     ],
   },
   {
     id: 2, contactId: 2, unread: 1,
     messages: [
-      { id: 1, own: false, text: "Привет! Можешь скинуть файлы?", time: "09:30" },
-      { id: 2, own: true, text: "Конечно, сейчас пришлю!", time: "09:31" },
-      { id: 3, own: false, text: "Спасибо большое ❤️", time: "09:32" },
+      { id: 1, own: false, text: "Привет! Можешь скинуть файлы?", time: "09:30", type: "text" },
+      { id: 2, own: true, text: "Конечно, сейчас пришлю!", time: "09:31", type: "text" },
+      { id: 3, own: false, text: "Спасибо большое ❤️", time: "09:32", type: "text" },
     ],
   },
   {
     id: 3, contactId: 3, unread: 0,
     messages: [
-      { id: 1, own: false, text: "До встречи завтра!", time: "вчера" },
-      { id: 2, own: true, text: "Договорились 👋", time: "вчера" },
+      { id: 1, own: false, text: "До встречи завтра!", time: "вчера", type: "text" },
+      { id: 2, own: true, text: "Договорились 👋", time: "вчера", type: "text" },
     ],
   },
   {
     id: 4, contactId: 4, unread: 7,
     messages: [
-      { id: 1, own: false, text: "Смотри какая погода сегодня!", time: "08:15" },
-      { id: 2, own: false, text: "Идём гулять?", time: "08:16" },
+      { id: 1, own: false, text: "Смотри какая погода сегодня!", time: "08:15", type: "text" },
+      { id: 2, own: false, text: "Идём гулять?", time: "08:16", type: "text" },
     ],
   },
 ];
+
+const REACTION_EMOJIS = ["❤️", "😂", "😮", "😢", "😡", "👍", "🔥", "🎉"];
 
 type Tab = "chats" | "contacts" | "calls" | "profile" | "settings";
 
@@ -71,29 +78,433 @@ const Avatar = ({ contact, size = "md" }: { contact: typeof contacts[0]; size?: 
   );
 };
 
+// ---- VOICE RECORDER HOOK ----
+const useVoiceRecorder = () => {
+  const [recording, setRecording] = useState(false);
+  const [seconds, setSeconds] = useState(0);
+  const mediaRef = useRef<MediaRecorder | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+
+  const start = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream);
+      chunksRef.current = [];
+      mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      mr.start();
+      mediaRef.current = mr;
+      setRecording(true);
+      setSeconds(0);
+      timerRef.current = setInterval(() => setSeconds(s => s + 1), 1000);
+    } catch { alert("Нет доступа к микрофону"); }
+  }, []);
+
+  const stop = useCallback((): Promise<string> => {
+    return new Promise(resolve => {
+      if (!mediaRef.current) { resolve(""); return; }
+      mediaRef.current.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        resolve(URL.createObjectURL(blob));
+        mediaRef.current?.stream.getTracks().forEach(t => t.stop());
+      };
+      mediaRef.current.stop();
+      if (timerRef.current) clearInterval(timerRef.current);
+      setRecording(false);
+    });
+  }, []);
+
+  const cancel = useCallback(() => {
+    mediaRef.current?.stream.getTracks().forEach(t => t.stop());
+    mediaRef.current = null;
+    if (timerRef.current) clearInterval(timerRef.current);
+    setRecording(false);
+    setSeconds(0);
+  }, []);
+
+  return { recording, seconds, start, stop, cancel };
+};
+
+// ---- CIRCLE RECORDER HOOK ----
+const useCircleRecorder = () => {
+  const [recording, setRecording] = useState(false);
+  const [seconds, setSeconds] = useState(0);
+  const mediaRef = useRef<MediaRecorder | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const start = useCallback(async (videoEl: HTMLVideoElement) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
+      streamRef.current = stream;
+      videoEl.srcObject = stream;
+      videoEl.play();
+      videoRef.current = videoEl;
+      const mr = new MediaRecorder(stream);
+      chunksRef.current = [];
+      mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      mr.start();
+      mediaRef.current = mr;
+      setRecording(true);
+      setSeconds(0);
+      timerRef.current = setInterval(() => setSeconds(s => s + 1), 1000);
+    } catch { alert("Нет доступа к камере"); }
+  }, []);
+
+  const stop = useCallback((): Promise<string> => {
+    return new Promise(resolve => {
+      if (!mediaRef.current) { resolve(""); return; }
+      mediaRef.current.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: "video/webm" });
+        resolve(URL.createObjectURL(blob));
+        streamRef.current?.getTracks().forEach(t => t.stop());
+      };
+      mediaRef.current.stop();
+      if (timerRef.current) clearInterval(timerRef.current);
+      setRecording(false);
+    });
+  }, []);
+
+  const cancel = useCallback(() => {
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    mediaRef.current = null;
+    if (timerRef.current) clearInterval(timerRef.current);
+    setRecording(false);
+    setSeconds(0);
+  }, []);
+
+  return { recording, seconds, start, stop, cancel };
+};
+
+const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+// ---- MESSAGE BUBBLE ----
+const MessageBubble = ({ msg, onReact }: { msg: Message; onReact: (msgId: number, emoji: string) => void }) => {
+  const [showPicker, setShowPicker] = useState(false);
+  const [pickerPos, setPickerPos] = useState({ x: 0, y: 0 });
+  const [playing, setPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  const handleClick = (e: React.MouseEvent) => {
+    if (msg.type === "voice" || msg.type === "circle") return;
+    setPickerPos({ x: e.clientX, y: e.clientY });
+    setShowPicker(v => !v);
+  };
+
+  const handleReact = (emoji: string) => { onReact(msg.id, emoji); setShowPicker(false); };
+
+  const toggleAudio = () => {
+    if (!audioRef.current) return;
+    if (playing) { audioRef.current.pause(); setPlaying(false); }
+    else { audioRef.current.play(); setPlaying(true); }
+  };
+
+  const renderContent = () => {
+    switch (msg.type) {
+      case "image":
+        return (
+          <div className="rounded-xl overflow-hidden max-w-[220px] cursor-pointer" onClick={handleClick}>
+            <img src={msg.mediaUrl} alt="фото" className="w-full object-cover max-h-48" />
+          </div>
+        );
+      case "video":
+        return (
+          <div className="rounded-xl overflow-hidden max-w-[220px] relative cursor-pointer" onClick={handleClick}>
+            <video ref={videoRef} src={msg.mediaUrl} className="w-full max-h-48 object-cover" />
+            <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+              <div className="w-12 h-12 rounded-full bg-white/20 backdrop-blur flex items-center justify-center">
+                <Icon name="Play" size={20} className="text-white ml-1" />
+              </div>
+            </div>
+          </div>
+        );
+      case "voice":
+        return (
+          <div className={`flex items-center gap-3 px-4 py-3 min-w-[180px] ${msg.own ? "msg-own" : "msg-other"}`} style={{ borderRadius: "18px" }}>
+            {msg.mediaUrl && <audio ref={audioRef} src={msg.mediaUrl} onEnded={() => setPlaying(false)} />}
+            <button onClick={toggleAudio} className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${msg.own ? "bg-white/20" : "bg-purple-500/20"}`}>
+              <Icon name={playing ? "Pause" : "Play"} size={16} className={msg.own ? "text-white" : "text-purple-400"} />
+            </button>
+            <div className="flex-1">
+              <div className="flex items-center gap-0.5 h-6">
+                {Array.from({ length: 20 }).map((_, i) => (
+                  <div key={i} className={`flex-1 rounded-full ${msg.own ? "bg-white/60" : "bg-purple-400/60"}`}
+                    style={{ height: `${20 + Math.sin(i * 0.8) * 14}px` }} />
+                ))}
+              </div>
+            </div>
+            <span className={`text-xs flex-shrink-0 ${msg.own ? "text-white/70" : "text-muted-foreground"}`}>
+              {fmtTime(msg.duration || 0)}
+            </span>
+          </div>
+        );
+      case "circle":
+        return (
+          <div className="relative cursor-pointer" onClick={handleClick}>
+            <div className="w-32 h-32 rounded-full overflow-hidden border-4 border-purple-500/60 relative"
+              style={{ background: "linear-gradient(135deg, #4FACFE33, #A855F733)" }}>
+              {msg.mediaUrl ? (
+                <video src={msg.mediaUrl} className="w-full h-full object-cover" loop playsInline autoPlay muted />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <Icon name="Video" size={28} className="text-purple-400" />
+                </div>
+              )}
+            </div>
+            <div className="absolute bottom-1 right-1 w-6 h-6 rounded-full bg-purple-500 flex items-center justify-center">
+              <Icon name="Play" size={10} className="text-white ml-0.5" />
+            </div>
+          </div>
+        );
+      default:
+        return (
+          <div className={`px-4 py-2.5 cursor-pointer ${msg.own ? "msg-own text-white" : "msg-other text-foreground"}`} onClick={handleClick}>
+            <p className="text-sm leading-relaxed">{msg.text}</p>
+          </div>
+        );
+    }
+  };
+
+  const hasReactions = msg.reactions && msg.reactions.length > 0;
+
+  return (
+    <div className={`flex ${msg.own ? "justify-end" : "justify-start"} animate-fade-in relative group`}>
+      <div className="max-w-[75%]">
+        {renderContent()}
+        {/* Reactions strip */}
+        {hasReactions && (
+          <div className={`flex flex-wrap gap-1 mt-1 ${msg.own ? "justify-end" : "justify-start"}`}>
+            {msg.reactions!.map(r => (
+              <button key={r.emoji} onClick={() => onReact(msg.id, r.emoji)}
+                className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs transition-all hover:scale-110 ${r.mine ? "border border-purple-400/50" : "border border-border"}`}
+                style={{ background: r.mine ? "rgba(168,85,247,0.15)" : "hsl(224 20% 14%)" }}>
+                <span>{r.emoji}</span>
+                {r.count > 1 && <span className="text-muted-foreground">{r.count}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+        <p className={`text-xs mt-1 px-1 ${msg.own ? "text-right text-muted-foreground" : "text-muted-foreground"}`}>{msg.time}</p>
+      </div>
+
+      {/* Reaction picker */}
+      {showPicker && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setShowPicker(false)} />
+          <div className={`absolute z-50 bottom-full mb-2 ${msg.own ? "right-0" : "left-0"} animate-fade-in`}>
+            <div className="glass rounded-2xl p-2 flex gap-1 shadow-2xl">
+              {REACTION_EMOJIS.map(e => (
+                <button key={e} onClick={() => handleReact(e)}
+                  className="w-9 h-9 rounded-xl hover:bg-white/10 transition-all hover:scale-125 text-lg flex items-center justify-center">
+                  {e}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+// ---- MEDIA PICKER ----
+const MediaPicker = ({ onClose, onFile }: { onClose: () => void; onFile: (type: "image" | "video", url: string, name: string) => void }) => {
+  const imgRef = useRef<HTMLInputElement>(null);
+  const vidRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = (type: "image" | "video") => (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    onFile(type, url, file.name);
+    onClose();
+  };
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div className="absolute bottom-full left-0 mb-2 z-50 animate-fade-in">
+        <div className="glass rounded-2xl p-3 flex flex-col gap-2 shadow-2xl min-w-[160px]">
+          <button onClick={() => imgRef.current?.click()} className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/10 transition-all text-sm font-medium">
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: "linear-gradient(135deg, #4FACFE, #06B6D4)" }}>
+              <Icon name="Image" size={16} className="text-white" />
+            </div>
+            Фото
+          </button>
+          <button onClick={() => vidRef.current?.click()} className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/10 transition-all text-sm font-medium">
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: "linear-gradient(135deg, #A855F7, #EC4899)" }}>
+              <Icon name="Film" size={16} className="text-white" />
+            </div>
+            Видео
+          </button>
+          <input ref={imgRef} type="file" accept="image/*" className="hidden" onChange={handleFile("image")} />
+          <input ref={vidRef} type="file" accept="video/*" className="hidden" onChange={handleFile("video")} />
+        </div>
+      </div>
+    </>
+  );
+};
+
+// ---- CIRCLE RECORDER MODAL ----
+const CircleModal = ({ onClose, onSend }: { onClose: () => void; onSend: (url: string, duration: number) => void }) => {
+  const previewRef = useRef<HTMLVideoElement>(null);
+  const { recording, seconds, start, stop, cancel } = useCircleRecorder();
+  const MAX = 60;
+
+  useEffect(() => {
+    if (previewRef.current) start(previewRef.current);
+    return () => { cancel(); };
+  }, []);
+
+  useEffect(() => {
+    if (seconds >= MAX) handleSend();
+  }, [seconds]);
+
+  const handleSend = async () => {
+    const url = await stop();
+    onSend(url, seconds);
+    onClose();
+  };
+
+  const handleCancel = () => { cancel(); onClose(); };
+
+  const progress = (seconds / MAX) * 100;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
+      <div className="flex flex-col items-center gap-6 p-8">
+        <h3 className="text-lg font-bold text-white">Видео-кружок</h3>
+        <div className="relative w-52 h-52">
+          <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="48" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="4" />
+            {recording && (
+              <circle cx="50" cy="50" r="48" fill="none" stroke="url(#grad)" strokeWidth="4"
+                strokeDasharray={`${progress * 3.015} 301.5`} strokeLinecap="round" />
+            )}
+            <defs>
+              <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#4FACFE" />
+                <stop offset="100%" stopColor="#A855F7" />
+              </linearGradient>
+            </defs>
+          </svg>
+          <div className="absolute inset-2 rounded-full overflow-hidden bg-secondary">
+            <video ref={previewRef} className="w-full h-full object-cover scale-x-[-1]" muted playsInline />
+          </div>
+          {!recording && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+                <Icon name="Camera" size={20} className="text-white" />
+              </div>
+            </div>
+          )}
+        </div>
+        {recording && (
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="text-white font-mono">{fmtTime(seconds)} / {fmtTime(MAX)}</span>
+          </div>
+        )}
+        <div className="flex gap-4">
+          <button onClick={handleCancel} className="px-6 py-3 rounded-2xl bg-white/10 text-white hover:bg-white/20 transition-all font-medium">
+            Отмена
+          </button>
+          {recording && (
+            <button onClick={handleSend} className="px-6 py-3 rounded-2xl text-white font-medium transition-all hover:scale-105"
+              style={{ background: "linear-gradient(135deg, #4FACFE, #A855F7)" }}>
+              Отправить
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ---- CHATS TAB ----
 const ChatsTab = () => {
   const [activeChat, setActiveChat] = useState<number | null>(null);
   const [msgText, setMsgText] = useState("");
-  const [chats, setChats] = useState(chatsData);
+  const [chats, setChats] = useState<Chat[]>(chatsData);
+  const [showMedia, setShowMedia] = useState(false);
+  const [showCircle, setShowCircle] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const voice = useVoiceRecorder();
 
   const activeChatData = chats.find(c => c.id === activeChat);
   const activeContact = activeChatData ? contacts.find(c => c.id === activeChatData.contactId) : null;
 
-  const sendMessage = () => {
+  const now = () => new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" });
+
+  const addMessage = (msg: Omit<Message, "id">) => {
+    setChats(prev => prev.map(c => c.id === activeChat
+      ? { ...c, messages: [...c.messages, { ...msg, id: Date.now() }] } : c));
+    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+  };
+
+  const sendText = () => {
     if (!msgText.trim() || !activeChat) return;
-    setChats(prev =>
-      prev.map(c =>
-        c.id === activeChat
-          ? { ...c, messages: [...c.messages, { id: Date.now(), own: true, text: msgText, time: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }) }] }
-          : c
-      )
-    );
+    addMessage({ own: true, text: msgText, time: now(), type: "text" });
     setMsgText("");
+  };
+
+  const sendMedia = (type: "image" | "video", url: string) => {
+    addMessage({ own: true, text: "", time: now(), type, mediaUrl: url });
+  };
+
+  const sendVoice = async () => {
+    if (voice.recording) {
+      const url = await voice.stop();
+      addMessage({ own: true, text: "", time: now(), type: "voice", mediaUrl: url, duration: voice.seconds });
+    } else {
+      await voice.start();
+    }
+  };
+
+  const sendCircle = (url: string, duration: number) => {
+    addMessage({ own: true, text: "", time: now(), type: "circle", mediaUrl: url, duration });
+  };
+
+  const handleReact = (msgId: number, emoji: string) => {
+    setChats(prev => prev.map(chat => chat.id === activeChat ? {
+      ...chat,
+      messages: chat.messages.map(m => {
+        if (m.id !== msgId) return m;
+        const existing = m.reactions || [];
+        const idx = existing.findIndex(r => r.emoji === emoji);
+        let updated: Reaction[];
+        if (idx >= 0) {
+          const r = existing[idx];
+          if (r.mine) {
+            updated = r.count <= 1 ? existing.filter((_, i) => i !== idx) : existing.map((r2, i) => i === idx ? { ...r2, count: r2.count - 1, mine: false } : r2);
+          } else {
+            updated = existing.map((r2, i) => i === idx ? { ...r2, count: r2.count + 1, mine: true } : r2);
+          }
+        } else {
+          updated = [...existing, { emoji, count: 1, mine: true }];
+        }
+        return { ...m, reactions: updated };
+      })
+    } : chat));
+  };
+
+  const lastMsgPreview = (chat: Chat) => {
+    const m = chat.messages[chat.messages.length - 1];
+    if (!m) return "";
+    if (m.type === "image") return "📷 Фото";
+    if (m.type === "video") return "🎬 Видео";
+    if (m.type === "voice") return "🎤 Голосовое";
+    if (m.type === "circle") return "⭕ Кружок";
+    return (m.own ? "Вы: " : "") + m.text;
   };
 
   return (
     <div className="flex h-full">
+      {showCircle && <CircleModal onClose={() => setShowCircle(false)} onSend={sendCircle} />}
+
       {/* Chat list */}
       <div className={`${activeChat ? "hidden md:flex" : "flex"} flex-col w-full md:w-80 border-r border-border flex-shrink-0`}>
         <div className="p-4 border-b border-border">
@@ -107,20 +518,17 @@ const ChatsTab = () => {
             const contact = contacts.find(c => c.id === chat.contactId)!;
             const lastMsg = chat.messages[chat.messages.length - 1];
             return (
-              <div
-                key={chat.id}
-                onClick={() => setActiveChat(chat.id)}
+              <div key={chat.id} onClick={() => setActiveChat(chat.id)}
                 className={`flex items-center gap-3 p-4 cursor-pointer transition-all hover:bg-secondary/50 animate-fade-in ${activeChat === chat.id ? "bg-secondary/70 border-l-2 border-purple-500" : ""}`}
-                style={{ animationDelay: `${i * 50}ms` }}
-              >
+                style={{ animationDelay: `${i * 50}ms` }}>
                 <Avatar contact={contact} size="md" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <span className="font-semibold text-sm truncate">{contact.name}</span>
-                    <span className="text-xs text-muted-foreground ml-2 flex-shrink-0">{lastMsg.time}</span>
+                    <span className="text-xs text-muted-foreground ml-2 flex-shrink-0">{lastMsg?.time}</span>
                   </div>
                   <div className="flex items-center justify-between mt-0.5">
-                    <span className="text-xs text-muted-foreground truncate">{lastMsg.own ? "Вы: " : ""}{lastMsg.text}</span>
+                    <span className="text-xs text-muted-foreground truncate">{lastMsgPreview(chat)}</span>
                     {chat.unread > 0 && (
                       <span className="ml-2 min-w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0 animate-notif" style={{ background: "linear-gradient(135deg, #4FACFE, #A855F7)" }}>
                         {chat.unread}
@@ -162,44 +570,74 @@ const ChatsTab = () => {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 space-y-2">
-            {activeChatData?.messages.map((msg, i) => (
-              <div key={msg.id} className={`flex ${msg.own ? "justify-end" : "justify-start"} animate-fade-in`} style={{ animationDelay: `${i * 30}ms` }}>
-                <div className={`max-w-[75%] px-4 py-2.5 ${msg.own ? "msg-own text-white" : "msg-other text-foreground"}`}>
-                  <p className="text-sm leading-relaxed">{msg.text}</p>
-                  <p className={`text-xs mt-1 ${msg.own ? "text-white/60 text-right" : "text-muted-foreground"}`}>{msg.time}</p>
-                </div>
-              </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {activeChatData?.messages.map((msg) => (
+              <MessageBubble key={msg.id} msg={msg} onReact={handleReact} />
             ))}
             <div className="flex justify-start">
-              <div className="msg-other px-4 py-3 flex items-center gap-1">
+              <div className="msg-other px-4 py-3 flex items-center gap-1" style={{ borderRadius: "18px" }}>
                 <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
               </div>
             </div>
+            <div ref={messagesEndRef} />
           </div>
 
-          <div className="p-4 border-t border-border glass">
-            <div className="flex items-end gap-3">
-              <button className="w-9 h-9 flex-shrink-0 rounded-full bg-secondary hover:bg-secondary/80 transition-colors flex items-center justify-center text-muted-foreground hover:text-purple-400">
-                <Icon name="Paperclip" size={18} />
+          {/* Input bar */}
+          <div className="p-3 border-t border-border glass">
+            {/* Voice recording bar */}
+            {voice.recording && (
+              <div className="flex items-center gap-3 mb-3 px-3 py-2 rounded-2xl bg-red-500/10 border border-red-500/30 animate-fade-in">
+                <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                <span className="text-red-400 text-sm font-mono flex-1">{fmtTime(voice.seconds)} — идёт запись...</span>
+                <button onClick={voice.cancel} className="text-muted-foreground hover:text-white transition-colors">
+                  <Icon name="X" size={16} />
+                </button>
+              </div>
+            )}
+            <div className="flex items-end gap-2">
+              {/* Media attach */}
+              <div className="relative">
+                <button onClick={() => setShowMedia(v => !v)}
+                  className="w-9 h-9 flex-shrink-0 rounded-full bg-secondary hover:bg-secondary/80 transition-colors flex items-center justify-center text-muted-foreground hover:text-purple-400">
+                  <Icon name="Paperclip" size={18} />
+                </button>
+                {showMedia && <MediaPicker onClose={() => setShowMedia(false)} onFile={(type, url) => { sendMedia(type, url); setShowMedia(false); }} />}
+              </div>
+
+              {/* Circle button */}
+              <button onClick={() => setShowCircle(true)}
+                className="w-9 h-9 flex-shrink-0 rounded-full bg-secondary hover:bg-purple-500/20 transition-colors flex items-center justify-center text-muted-foreground hover:text-purple-400"
+                title="Видео-кружок">
+                <Icon name="Circle" size={18} />
               </button>
+
+              {/* Text input */}
               <div className="flex-1 relative">
                 <textarea
                   value={msgText}
                   onChange={e => setMsgText(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendText(); } }}
                   className="w-full bg-secondary rounded-2xl px-4 py-2.5 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-purple-500 placeholder:text-muted-foreground max-h-32 min-h-[44px]"
                   placeholder="Напишите сообщение..."
                   rows={1}
                 />
               </div>
-              <button
-                onClick={sendMessage}
-                className="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center text-white transition-all hover:scale-110 active:scale-95"
-                style={{ background: "linear-gradient(135deg, #4FACFE, #A855F7)" }}
-              >
-                <Icon name="Send" size={18} />
-              </button>
+
+              {/* Voice or Send */}
+              {msgText.trim() ? (
+                <button onClick={sendText}
+                  className="w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center text-white transition-all hover:scale-110 active:scale-95"
+                  style={{ background: "linear-gradient(135deg, #4FACFE, #A855F7)" }}>
+                  <Icon name="Send" size={18} />
+                </button>
+              ) : (
+                <button onClick={sendVoice}
+                  className={`w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center transition-all hover:scale-110 active:scale-95 text-white ${voice.recording ? "bg-red-500 hover:bg-red-600 animate-pulse" : ""}`}
+                  style={!voice.recording ? { background: "linear-gradient(135deg, #4FACFE, #A855F7)" } : {}}
+                  title={voice.recording ? "Отправить" : "Голосовое"}>
+                  <Icon name={voice.recording ? "Send" : "Mic"} size={18} />
+                </button>
+              )}
             </div>
           </div>
         </div>
