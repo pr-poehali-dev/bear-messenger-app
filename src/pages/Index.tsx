@@ -819,30 +819,187 @@ const CallsTab = () => {
 };
 
 // ---- PROFILE TAB ----
+const AVATAR_COLORS = ["#4FACFE", "#A855F7", "#EC4899", "#22C55E", "#F59E0B", "#FF6B35", "#06B6D4", "#EF4444", "#8B5CF6", "#10B981"];
+
 const ProfileTab = () => {
   const [status, setStatus] = useState<"online" | "away" | "offline">("online");
+  const [editing, setEditing] = useState(false);
+
+  const [displayName, setDisplayName] = useState("Яков Медведев");
+  const [username, setUsername] = useState("mishka_user");
+  const [bio, setBio] = useState("Любитель природы и хорошего общения 🐻");
+  const [avatarColor, setAvatarColor] = useState("#A855F7");
+
+  const [draftName, setDraftName] = useState(displayName);
+  const [draftUsername, setDraftUsername] = useState(username);
+  const [draftBio, setDraftBio] = useState(bio);
+  const [draftColor, setDraftColor] = useState(avatarColor);
+  const [usernameError, setUsernameError] = useState("");
+
+  const initials = displayName.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
+
   const statusLabels: Record<string, string> = { online: "В сети", away: "Отхожу", offline: "Не беспокоить" };
   const statusColors: Record<string, string> = { online: "text-green-400", away: "text-yellow-400", offline: "text-gray-400" };
 
+  const openEdit = () => {
+    setDraftName(displayName);
+    setDraftUsername(username);
+    setDraftBio(bio);
+    setDraftColor(avatarColor);
+    setUsernameError("");
+    setEditing(true);
+  };
+
+  const validateUsername = (val: string) => {
+    if (!val) return "Юзернейм не может быть пустым";
+    if (val.length < 3) return "Минимум 3 символа";
+    if (val.length > 32) return "Максимум 32 символа";
+    if (!/^[a-z0-9_]+$/.test(val)) return "Только латиница, цифры и _";
+    return "";
+  };
+
+  const handleUsernameChange = (val: string) => {
+    const clean = val.toLowerCase().replace(/[^a-z0-9_]/g, "");
+    setDraftUsername(clean);
+    setUsernameError(validateUsername(clean));
+  };
+
+  const saveProfile = () => {
+    const err = validateUsername(draftUsername);
+    if (err) { setUsernameError(err); return; }
+    if (!draftName.trim()) return;
+    setDisplayName(draftName.trim());
+    setUsername(draftUsername);
+    setBio(draftBio.trim());
+    setAvatarColor(draftColor);
+    setEditing(false);
+  };
+
   return (
     <div className="flex flex-col h-full overflow-y-auto">
+      {/* Edit modal */}
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md bg-card rounded-t-3xl sm:rounded-3xl p-6 space-y-5 animate-slide-left shadow-2xl mx-auto">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold">Редактировать профиль</h2>
+              <button onClick={() => setEditing(false)} className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-muted-foreground hover:text-white transition-colors">
+                <Icon name="X" size={16} />
+              </button>
+            </div>
+
+            {/* Avatar color picker */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Цвет аватара</p>
+              <div className="flex items-center gap-3">
+                <div className="w-14 h-14 rounded-full flex items-center justify-center text-xl font-bold text-white flex-shrink-0"
+                  style={{ background: `linear-gradient(135deg, ${draftColor}99, ${draftColor})` }}>
+                  {draftName.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2) || "??"}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {AVATAR_COLORS.map(c => (
+                    <button key={c} onClick={() => setDraftColor(c)}
+                      className={`w-7 h-7 rounded-full transition-all hover:scale-110 ${draftColor === c ? "ring-2 ring-white ring-offset-2 ring-offset-card scale-110" : ""}`}
+                      style={{ background: c }} />
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Display name */}
+            <div>
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">Имя</label>
+              <input
+                value={draftName}
+                onChange={e => setDraftName(e.target.value)}
+                maxLength={50}
+                className="w-full bg-secondary rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-purple-500 placeholder:text-muted-foreground"
+                placeholder="Ваше имя"
+              />
+            </div>
+
+            {/* Username */}
+            <div>
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">Юзернейм</label>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground text-sm select-none">@</span>
+                <input
+                  value={draftUsername}
+                  onChange={e => handleUsernameChange(e.target.value)}
+                  maxLength={32}
+                  className={`w-full bg-secondary rounded-xl pl-8 pr-4 py-3 text-sm focus:outline-none focus:ring-1 placeholder:text-muted-foreground ${usernameError ? "ring-1 ring-red-500 focus:ring-red-500" : "focus:ring-purple-500"}`}
+                  placeholder="username"
+                />
+              </div>
+              {usernameError ? (
+                <p className="text-xs text-red-400 mt-1.5 flex items-center gap-1">
+                  <Icon name="AlertCircle" size={12} />
+                  {usernameError}
+                </p>
+              ) : draftUsername ? (
+                <p className="text-xs text-green-400 mt-1.5 flex items-center gap-1">
+                  <Icon name="CheckCircle" size={12} />
+                  @{draftUsername} — доступен
+                </p>
+              ) : null}
+              <p className="text-xs text-muted-foreground mt-1">Только латиница, цифры и _ (3–32 символа)</p>
+            </div>
+
+            {/* Bio */}
+            <div>
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">О себе</label>
+              <textarea
+                value={draftBio}
+                onChange={e => setDraftBio(e.target.value)}
+                maxLength={120}
+                rows={3}
+                className="w-full bg-secondary rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-purple-500 placeholder:text-muted-foreground resize-none"
+                placeholder="Расскажите о себе..."
+              />
+              <p className="text-xs text-muted-foreground mt-1 text-right">{draftBio.length}/120</p>
+            </div>
+
+            <div className="flex gap-3 pt-1">
+              <button onClick={() => setEditing(false)}
+                className="flex-1 py-3 rounded-2xl bg-secondary text-sm font-medium hover:bg-secondary/80 transition-colors">
+                Отмена
+              </button>
+              <button onClick={saveProfile}
+                disabled={!!usernameError || !draftName.trim()}
+                className="flex-1 py-3 rounded-2xl text-sm font-medium text-white transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                style={{ background: "linear-gradient(135deg, #4FACFE, #A855F7)" }}>
+                Сохранить
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="relative h-32 flex-shrink-0" style={{ background: "linear-gradient(135deg, #4FACFE 0%, #A855F7 50%, #EC4899 100%)" }}>
         <div className="absolute inset-0 opacity-20" style={{ backgroundSize: "40px 40px", backgroundImage: "radial-gradient(circle, white 1px, transparent 1px)" }} />
       </div>
       <div className="px-6 pb-6">
         <div className="flex items-end justify-between -mt-10 mb-4">
           <div className="relative">
-            <div className="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold text-white border-4 border-background" style={{ background: "linear-gradient(135deg, #4FACFE, #A855F7)" }}>ЯМ</div>
-            <button className="absolute bottom-1 right-1 w-6 h-6 rounded-full bg-purple-500 flex items-center justify-center hover:bg-purple-600 transition-colors">
-              <Icon name="Camera" size={12} className="text-white" />
-            </button>
+            <div className="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold text-white border-4 border-background transition-all"
+              style={{ background: `linear-gradient(135deg, ${avatarColor}99, ${avatarColor})` }}>
+              {initials}
+            </div>
           </div>
-          <button className="px-4 py-2 rounded-xl text-sm font-medium text-white transition-all hover:scale-105" style={{ background: "linear-gradient(135deg, #4FACFE, #A855F7)" }}>Редактировать</button>
+          <button onClick={openEdit}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white transition-all hover:scale-105"
+            style={{ background: "linear-gradient(135deg, #4FACFE, #A855F7)" }}>
+            <Icon name="Pencil" size={14} />
+            Редактировать
+          </button>
         </div>
         <div className="space-y-1 mb-5">
-          <h2 className="text-xl font-bold">Яков Медведев</h2>
-          <p className="text-muted-foreground text-sm">@mishka_user</p>
-          <p className="text-sm mt-2">Любитель природы и хорошего общения 🐻</p>
+          <h2 className="text-xl font-bold">{displayName}</h2>
+          <button onClick={openEdit} className="text-muted-foreground text-sm hover:text-purple-400 transition-colors flex items-center gap-1 group">
+            <span>@{username}</span>
+            <Icon name="Pencil" size={11} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+          </button>
+          {bio && <p className="text-sm mt-2 text-foreground/80">{bio}</p>}
         </div>
         <div className="bg-secondary rounded-2xl p-4 mb-4">
           <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Статус</h3>
@@ -866,10 +1023,10 @@ const ProfileTab = () => {
           ))}
         </div>
         <div className="bg-secondary rounded-2xl p-4 space-y-3">
-          {[{ icon: "Phone", label: "+7 900 123-45-67" }, { icon: "Mail", label: "mishka@example.com" }, { icon: "MapPin", label: "Москва, Россия" }].map(item => (
+          {[{ icon: "AtSign", label: `@${username}` }, { icon: "Mail", label: "mishka@example.com" }, { icon: "MapPin", label: "Москва, Россия" }].map(item => (
             <div key={item.icon} className="flex items-center gap-3 text-sm">
               <div className="w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center">
-                <Icon name={item.icon as "Phone"} size={15} className="text-purple-400" />
+                <Icon name={item.icon as "AtSign"} size={15} className="text-purple-400" />
               </div>
               <span>{item.label}</span>
             </div>
